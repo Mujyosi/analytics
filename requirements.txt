@@ -9,3 +9,4 @@ httpx==0.25.1
 
 # Add these to ensure pre-built wheels
 cryptography==41.0.7  # Has pre-built wheels
+--only-binary :all:
