@@ -1,0 +1,68 @@
+import logging
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
+
+def setup_logging():
+    """Configure logging"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    return logging.getLogger(__name__)
+
+def get_ip_address(request) -> str:
+    """Extract IP address from request, handling Cloudflare headers"""
+    # Cloudflare passes real IP in cf-connecting-ip header
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip
+    
+    # Fallback to X-Forwarded-For (common with proxies)
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        # X-Forwarded-For can contain multiple IPs, first is original
+        return xff.split(",")[0].strip()
+    
+    # Last resort: client host
+    return request.client.host
+
+async def update_session(hashed_ip: str, db):
+    """Update or create session for IP"""
+    try:
+        with db.get_cursor() as cursor:
+            # Check for existing active session (within last 30 minutes)
+            cursor.execute("""
+                SELECT id, page_count 
+                FROM sessions 
+                WHERE hashed_ip = %s 
+                AND session_end IS NULL 
+                AND session_start > NOW() - INTERVAL '30 minutes'
+                ORDER BY session_start DESC 
+                LIMIT 1
+            """, (hashed_ip,))
+            
+            session = cursor.fetchone()
+            
+            if session:
+                # Update existing session
+                cursor.execute("""
+                    UPDATE sessions 
+                    SET page_count = page_count + 1 
+                    WHERE id = %s
+                """, (session['id'],))
+            else:
+                # End previous sessions
+                cursor.execute("""
+                    UPDATE sessions 
+                    SET session_end = NOW() 
+                    WHERE hashed_ip = %s 
+                    AND session_end IS NULL
+                """, (hashed_ip,))
+                
+                # Create new session
+                cursor.execute("""
+                    INSERT INTO sessions (hashed_ip, page_count) 
+                    VALUES (%s, 1)
+                """, (hashed_ip,))
+    except Exception as e:
+        logging.error(f"Session update error: {e}")
