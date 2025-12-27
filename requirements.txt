@@ -1,9 +1,7 @@
-# Exact versions known to have pre-built wheels
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 pydantic==2.5.0
-pydantic-core==2.14.5  # This version has better wheel support
 redis==5.0.1
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
