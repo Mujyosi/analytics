@@ -8,6 +8,22 @@ class EventBase(BaseModel):
     action: str = Field(..., max_length=20)
     referrer: Optional[str] = None
     user_agent: Optional[str] = None
+    
+    class Config:
+        extra = "allow"  # Allow extra fields
+    
+    @validator('url', pre=True, always=True)
+    def set_url(cls, v):
+        return v or "unknown"
+    
+    @validator('page_id', pre=True, always=True)
+    def set_page_id(cls, v):
+        return v or "unknown"
+    
+    @validator('action', pre=True, always=True)
+    def set_action(cls, v):
+        return v or "unknown"
+
 
 # Add this class - it's what endpoints.py is looking for
 class EventCreate(EventBase):
