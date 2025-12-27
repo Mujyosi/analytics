@@ -44,65 +44,82 @@ class Database:
 db = Database()
 
 # Initialize tables
+# Initialize tables
 def init_tables():
     """Create tables if they don't exist"""
+    # Drop existing tables first to avoid conflicts
+    drop_tables = """
+    DROP TABLE IF EXISTS events CASCADE;
+    DROP TABLE IF EXISTS ip_cache CASCADE;
+    DROP TABLE IF EXISTS sessions CASCADE;
+    """
+    
     create_events_table = """
-    CREATE TABLE IF NOT EXISTS public.events (
-        id serial NOT NULL,
-        hashed_ip character(64) NOT NULL,
-        country character(2) NULL,
-        asn integer NULL,
-        device character varying(20) NULL,
-        browser character varying(50) NULL,
-        os character varying(50) NULL,
-        page_id character varying(50) NULL,
-        url text NULL,
-        action character varying(20) NULL,
-        referrer text NULL,
-        created_at timestamp without time zone NULL DEFAULT now(),
-        CONSTRAINT events_pkey PRIMARY KEY (id)
+    CREATE TABLE IF NOT EXISTS events (
+        id SERIAL PRIMARY KEY,
+        hashed_ip VARCHAR(64) NOT NULL,
+        country VARCHAR(10),
+        asn INTEGER,
+        device VARCHAR(50),
+        browser VARCHAR(100),
+        os VARCHAR(100),
+        page_id VARCHAR(100),
+        url TEXT,
+        action VARCHAR(50),
+        referrer TEXT,
+        session_id VARCHAR(255),
+        screen_width INTEGER,
+        screen_height INTEGER,
+        time_on_page INTEGER,
+        created_at TIMESTAMP DEFAULT NOW()
     );
     """
     
     create_ip_cache_table = """
-    CREATE TABLE IF NOT EXISTS public.ip_cache (
-        hashed_ip character(64) NOT NULL,
-        country character(2) NULL,
-        asn integer NULL,
-        device character varying(20) NULL,
-        browser character varying(50) NULL,
-        os character varying(50) NULL,
-        last_updated timestamp without time zone NULL DEFAULT now(),
-        CONSTRAINT ip_cache_pkey PRIMARY KEY (hashed_ip)
+    CREATE TABLE IF NOT EXISTS ip_cache (
+        hashed_ip VARCHAR(64) PRIMARY KEY,
+        country VARCHAR(10),
+        asn INTEGER,
+        device VARCHAR(50),
+        browser VARCHAR(100),
+        os VARCHAR(100),
+        last_updated TIMESTAMP DEFAULT NOW()
     );
     """
     
     create_sessions_table = """
-    CREATE TABLE IF NOT EXISTS public.sessions (
-        id serial NOT NULL,
-        hashed_ip character(64) NOT NULL,
-        session_start timestamp without time zone NULL DEFAULT now(),
-        session_end timestamp without time zone NULL,
-        page_count integer NULL DEFAULT 1,
-        CONSTRAINT sessions_pkey PRIMARY KEY (id)
+    CREATE TABLE IF NOT EXISTS sessions (
+        id SERIAL PRIMARY KEY,
+        hashed_ip VARCHAR(64) NOT NULL,
+        session_id VARCHAR(255),
+        session_start TIMESTAMP DEFAULT NOW(),
+        session_end TIMESTAMP,
+        page_count INTEGER DEFAULT 1
     );
     """
     
     create_indexes = """
-    CREATE INDEX IF NOT EXISTS idx_hashed_ip ON public.events USING btree (hashed_ip);
-    CREATE INDEX IF NOT EXISTS idx_page_id ON public.events USING btree (page_id);
-    CREATE INDEX IF NOT EXISTS idx_created_at ON public.events USING btree (created_at);
-    CREATE INDEX IF NOT EXISTS idx_session_hashed_ip ON public.sessions USING btree (hashed_ip);
-    CREATE INDEX IF NOT EXISTS idx_session_start ON public.sessions USING btree (session_start);
+    CREATE INDEX IF NOT EXISTS idx_events_hashed_ip ON events(hashed_ip);
+    CREATE INDEX IF NOT EXISTS idx_events_page_id ON events(page_id);
+    CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_hashed_ip ON sessions(hashed_ip);
+    CREATE INDEX IF NOT EXISTS idx_sessions_session_start ON sessions(session_start);
+    CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
     """
     
     try:
         with db.get_cursor() as cursor:
+            # Drop old tables
+            cursor.execute(drop_tables)
+            logger.info("Dropped old tables")
+            
+            # Create new tables
             cursor.execute(create_events_table)
             cursor.execute(create_ip_cache_table)
             cursor.execute(create_sessions_table)
             cursor.execute(create_indexes)
-            logger.info("Database tables initialized")
+            logger.info("Database tables recreated successfully")
     except Exception as e:
         logger.error(f"Failed to initialize tables: {e}")
         raise
