@@ -6,6 +6,7 @@ import httpx
 from app.config import settings
 import logging
 from user_agents import parse
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,21 @@ class IPUtils:
         return False
 
     @staticmethod
+    def _extract_asn_number(asn_str: Optional[str]) -> Optional[int]:
+        """Extract ASN number from string like 'AS12345' or 'AS12345 (Company)'"""
+        if not asn_str:
+            return None
+        
+        # Look for numbers in the string
+        match = re.search(r'AS(\d+)', asn_str)
+        if match:
+            try:
+                return int(match.group(1))
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    @staticmethod
     async def get_ip_metadata(ip_address: str) -> Dict[str, Any]:
         """
         Get IP metadata from IPinfo Lite (free + safe at scale).
@@ -66,7 +82,7 @@ class IPUtils:
         """
         metadata = {
             "country": None,
-            "asn": None,
+            "asn": None,  # Will be integer or None
             "device": None,
             "browser": None,
             "os": None
@@ -78,12 +94,16 @@ class IPUtils:
 
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                url = f"https://api.ipinfo.io/lite/{ip_address}?token={settings.IPINFO_TOKEN}"
+                url = f"https://ipinfo.io/{ip_address}?token={settings.IPINFO_TOKEN}"
                 res = await client.get(url)
                 if res.status_code == 200:
                     data = res.json()
                     metadata["country"] = data.get("country")
-                    metadata["asn"] = data.get("asn")
+                    
+                    # Extract ASN number from the ASN string
+                    asn_str = data.get("org") or data.get("asn")
+                    metadata["asn"] = IPUtils._extract_asn_number(asn_str)
+                    
                 elif res.status_code in (429, 403):
                     logger.warning(f"IPinfo rate limit or access error for IP: {ip_address}")
                 else:
