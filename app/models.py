@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field,validator
-from typing import Optional
+from pydantic import BaseModel, Field, validator
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 class EventBase(BaseModel):
@@ -8,9 +8,15 @@ class EventBase(BaseModel):
     action: str = Field(..., max_length=20)
     referrer: Optional[str] = None
     user_agent: Optional[str] = None
+    session_id: Optional[str] = None
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
+    timestamp: Optional[str] = None
+    # Allow any extra fields that might be sent
+    extra_data: Optional[Dict[str, Any]] = {}
     
     class Config:
-        extra = "allow"  # Allow extra fields
+        extra = "allow"  # This allows extra fields
     
     @validator('url', pre=True, always=True)
     def set_url(cls, v):
@@ -23,11 +29,20 @@ class EventBase(BaseModel):
     @validator('action', pre=True, always=True)
     def set_action(cls, v):
         return v or "unknown"
+    
+    @validator('screen_width', 'screen_height', pre=True)
+    def validate_screen_dimensions(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
 
 
-# Add this class - it's what endpoints.py is looking for
 class EventCreate(EventBase):
     pass
+
 
 class EventResponse(BaseModel):
     id: int
@@ -44,6 +59,7 @@ class EventResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
 
 class IPMetadata(BaseModel):
     country: Optional[str] = None
