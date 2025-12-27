@@ -14,9 +14,12 @@ class EventBase(BaseModel):
     screen_height: Optional[int] = None
     timestamp: Optional[str] = None
     
+    # Add time_on_page field since it's in the extraData
+    time_on_page: Optional[int] = None
+    
     # Allow extra fields from analytics script
     class Config:
-        extra = "ignore"  # Changed from "allow" to "ignore" to be more permissive
+        extra = "allow"  # Changed back to "allow" to accept time_on_page
     
     @validator('url', pre=True, always=True)
     def set_url(cls, v):
@@ -28,15 +31,11 @@ class EventBase(BaseModel):
     
     @validator('action', pre=True, always=True)
     def set_action(cls, v):
-        # Map "page_view" from script to "view" in database
-        if v == "page_view":
-            return "view"
-        if v == "time_on_page":
-            return "time_spent"
+        # Don't map actions - keep them as sent
         return v or "unknown"
     
-    @validator('screen_width', 'screen_height', pre=True)
-    def validate_screen_dimensions(cls, v):
+    @validator('screen_width', 'screen_height', 'time_on_page', pre=True)
+    def validate_integers(cls, v):
         if v is None or v == "":
             return None
         try:
