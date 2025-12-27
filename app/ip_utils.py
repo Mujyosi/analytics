@@ -59,30 +59,14 @@ class IPUtils:
         return False
 
     @staticmethod
-    def _extract_asn_number(asn_str: Optional[str]) -> Optional[int]:
-        """Extract ASN number from string like 'AS12345' or 'AS12345 (Company)'"""
-        if not asn_str:
-            return None
-        
-        # Look for numbers in the string
-        match = re.search(r'AS(\d+)', asn_str)
-        if match:
-            try:
-                return int(match.group(1))
-            except (ValueError, TypeError):
-                return None
-        return None
-
-    @staticmethod
     async def get_ip_metadata(ip_address: str) -> Dict[str, Any]:
         """
-        Get IP metadata from IPinfo Lite (free + safe at scale).
-        Requires token in settings.IPINFO_TOKEN.
-        Returns country and ASN info.
+        Get IP metadata from IPinfo Lite.
+        Ensures 'asn' is always int or None.
         """
         metadata = {
             "country": None,
-            "asn": None,  # Will be integer or None
+            "asn": None,  # Must stay None if missing
             "device": None,
             "browser": None,
             "os": None
@@ -94,16 +78,25 @@ class IPUtils:
 
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                url = f"https://ipinfo.io/{ip_address}?token={settings.IPINFO_TOKEN}"
+                url = f"https://ipinfo.io/{ip_address}/json?token={getattr(settings, 'IPINFO_TOKEN', '')}"
                 res = await client.get(url)
                 if res.status_code == 200:
                     data = res.json()
                     metadata["country"] = data.get("country")
                     
-                    # Extract ASN number from the ASN string
-                    asn_str = data.get("org") or data.get("asn")
-                    metadata["asn"] = IPUtils._extract_asn_number(asn_str)
-                    
+                    # Parse ASN safely
+                    org = data.get("org", "")
+                    if org:
+                        match = re.search(r'AS(\d+)', org)
+                        if match:
+                            try:
+                                metadata["asn"] = int(match.group(1))
+                            except (ValueError, TypeError):
+                                metadata["asn"] = None
+                        else:
+                            metadata["asn"] = None
+                    else:
+                        metadata["asn"] = None
                 elif res.status_code in (429, 403):
                     logger.warning(f"IPinfo rate limit or access error for IP: {ip_address}")
                 else:
