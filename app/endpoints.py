@@ -49,8 +49,10 @@ async def collect_event(
     Collect analytics event from movie site
     """
     try:
-        # 1. Extract and hash IP
-        ip_address = get_ip_address(request)
+        # 1. Extract and hash IP (handle the :0 port issue)
+        raw_ip = get_ip_address(request)
+        # Clean up IP if it has :0 port
+        ip_address = raw_ip.split(':')[0] if ':0' in raw_ip else raw_ip
         hashed_ip = ip_utils.hash_ip(ip_address)
         
         # 2. Get IP metadata (cached or from API)
@@ -61,13 +63,19 @@ async def collect_event(
         if event.user_agent:
             user_agent_info = ip_utils.parse_user_agent(event.user_agent)
         
-        # 4. Insert event into PostgreSQL
+        # 4. Handle time_on_page action
+        time_on_page = None
+        if event.action == "time_on_page" and hasattr(event, 'time_on_page'):
+            time_on_page = event.time_on_page
+        
+        # 5. Insert event into PostgreSQL
         with db.get_cursor() as cursor:
             cursor.execute("""
                 INSERT INTO events (
                     hashed_ip, country, asn, device, browser, os,
-                    page_id, url, action, referrer
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    page_id, url, action, referrer, session_id,
+                    screen_width, screen_height, time_on_page
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (
                 hashed_ip,
@@ -79,20 +87,26 @@ async def collect_event(
                 event.page_id,
                 event.url,
                 event.action,
-                event.referrer
+                event.referrer,
+                event.session_id,
+                event.screen_width,
+                event.screen_height,
+                time_on_page
             ))
             
             event_id = cursor.fetchone()["id"]
             logger.info(f"Event recorded: {event_id} for IP: {hashed_ip[:8]}...")
         
-        # 5. Update session in background
-        background_tasks.add_task(update_session, hashed_ip, db)
+        # 6. Update session in background
+        background_tasks.add_task(update_session, hashed_ip, event.session_id, db)
         
         return {"status": "ok", "message": "Event recorded"}
         
     except Exception as e:
-        logger.error(f"Error collecting event: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error collecting event: {str(e)}")
+        # Log the actual event data for debugging
+        logger.error(f"Event data: {event.dict()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/health")
 async def health_check():
