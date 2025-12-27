@@ -1,3 +1,4 @@
+# app/ip_utils.py
 import hashlib
 import json
 from typing import Optional, Dict, Any
@@ -5,7 +6,6 @@ import httpx
 from app.config import settings
 import logging
 from user_agents import parse
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,41 @@ class IPUtils:
         except Exception as e:
             logger.error(f"Failed to parse user agent: {e}")
             return {"device": None, "browser": None, "os": None}
-    
+
+    @staticmethod
+    def _is_local_ip(ip_address: str) -> bool:
+        """Check if IP address is local or reserved"""
+        # IPv4 localhost
+        if ip_address == "127.0.0.1":
+            return True
+        # IPv6 localhost
+        if ip_address == "::1":
+            return True
+        # Private IPv4 ranges
+        if '.' in ip_address:
+            parts = ip_address.split('.')
+            if len(parts) == 4:
+                try:
+                    first = int(parts[0])
+                    second = int(parts[1])
+                    if first == 10:
+                        return True
+                    if first == 172 and 16 <= second <= 31:
+                        return True
+                    if first == 192 and second == 168:
+                        return True
+                    if first == 169 and second == 254:
+                        return True
+                except ValueError:
+                    pass
+        return False
+
     @staticmethod
     async def get_ip_metadata(ip_address: str) -> Dict[str, Any]:
         """
-        Get IP metadata from external service.
-        You can use IPinfo, ipapi, or any other service.
+        Get IP metadata from IPinfo Lite (free + safe at scale).
+        Requires token in settings.IPINFO_TOKEN.
+        Returns country and ASN info.
         """
         metadata = {
             "country": None,
@@ -42,46 +71,33 @@ class IPUtils:
             "browser": None,
             "os": None
         }
-        
-        # Method 1: Use IPinfo (requires token)
-        if settings.ipinfo_token:
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    url = f"https://ipinfo.io/{ip_address}/json?token={settings.ipinfo_token}"
-                    response = await client.get(url)
-                    if response.status_code == 200:
-                        data = response.json()
-                        metadata["country"] = data.get("country")
-                        
-                        # Parse ASN from org field (format: "AS12345 Org Name")
-                        org = data.get("org", "")
-                        asn_match = re.search(r'AS(\d+)', org)
-                        if asn_match:
-                            metadata["asn"] = int(asn_match.group(1))
-            except Exception as e:
-                logger.error(f"IPinfo API error: {e}")
-        
-        # Method 2: Fallback to free service (ip-api.com)
-        if not metadata["country"]:
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    url = f"http://ip-api.com/json/{ip_address}"
-                    response = await client.get(url)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get("status") == "success":
-                            metadata["country"] = data.get("countryCode")
-                            metadata["asn"] = data.get("asn", "").replace("AS", "")
-            except Exception as e:
-                logger.error(f"ip-api.com error: {e}")
-        
+
+        if IPUtils._is_local_ip(ip_address):
+            metadata["country"] = "Local"
+            return metadata
+
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                url = f"https://api.ipinfo.io/lite/{ip_address}?token={settings.IPINFO_TOKEN}"
+                res = await client.get(url)
+                if res.status_code == 200:
+                    data = res.json()
+                    metadata["country"] = data.get("country")
+                    metadata["asn"] = data.get("asn")
+                elif res.status_code in (429, 403):
+                    logger.warning(f"IPinfo rate limit or access error for IP: {ip_address}")
+                else:
+                    logger.error(f"IPinfo API returned {res.status_code} for IP: {ip_address}")
+        except Exception as e:
+            logger.error(f"Error fetching IP metadata for {ip_address}: {e}")
+
         return metadata
-    
+
     @staticmethod
     def serialize_metadata(metadata: Dict[str, Any]) -> str:
         """Serialize metadata dict to JSON string for Redis"""
         return json.dumps(metadata)
-    
+
     @staticmethod
     def deserialize_metadata(metadata_str: str) -> Dict[str, Any]:
         """Deserialize JSON string from Redis to dict"""
@@ -89,5 +105,32 @@ class IPUtils:
             return json.loads(metadata_str)
         except json.JSONDecodeError:
             return {}
+
+    @staticmethod
+    async def get_cached_or_fetch(ip_address: str, cache_client: Optional[Any] = None,
+                                  cache_ttl: int = 604800) -> Dict[str, Any]:
+        """
+        Get IP metadata with optional caching (1 week default TTL)
+        cache_client must have async get/setex methods like aioredis.
+        """
+        cache_key = f"ip_metadata:{ip_address}"
+        if cache_client:
+            try:
+                cached_data = await cache_client.get(cache_key)
+                if cached_data:
+                    return IPUtils.deserialize_metadata(cached_data)
+            except Exception as e:
+                logger.error(f"Cache read error for {ip_address}: {e}")
+
+        metadata = await IPUtils.get_ip_metadata(ip_address)
+
+        if cache_client and metadata.get("country"):
+            try:
+                serialized = IPUtils.serialize_metadata(metadata)
+                await cache_client.setex(cache_key, cache_ttl, serialized)
+            except Exception as e:
+                logger.error(f"Cache write error for {ip_address}: {e}")
+
+        return metadata
 
 ip_utils = IPUtils()
