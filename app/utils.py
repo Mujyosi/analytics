@@ -1,6 +1,8 @@
+# app/utils.py
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+from fastapi import Request
 
 def setup_logging():
     """Configure logging"""
@@ -10,12 +12,12 @@ def setup_logging():
     )
     return logging.getLogger(__name__)
 
-def get_ip_address(request) -> str:
+def get_ip_address(request: Request) -> str:
     """Extract IP address from request, handling Cloudflare headers"""
     # Cloudflare passes real IP in cf-connecting-ip header
     cf_ip = request.headers.get("cf-connecting-ip")
     if cf_ip:
-        return cf_ip
+        return cf_ip.strip()
     
     # Fallback to X-Forwarded-For (common with proxies)
     xff = request.headers.get("x-forwarded-for")
@@ -26,8 +28,18 @@ def get_ip_address(request) -> str:
     # Last resort: client host
     return request.client.host
 
+def sanitize_int(value: Optional[Any]) -> Optional[int]:
+    """Convert empty string or invalid value to None for integer fields"""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
 async def update_session(hashed_ip: str, db):
     """Update or create session for IP"""
+    logger = logging.getLogger("app.utils")
     try:
         with db.get_cursor() as cursor:
             # Check for existing active session (within last 30 minutes)
@@ -47,9 +59,9 @@ async def update_session(hashed_ip: str, db):
                 # Update existing session
                 cursor.execute("""
                     UPDATE sessions 
-                    SET page_count = page_count + 1 
+                    SET page_count = %s 
                     WHERE id = %s
-                """, (session['id'],))
+                """, (sanitize_int(session['page_count']) + 1, session['id']))
             else:
                 # End previous sessions
                 cursor.execute("""
@@ -65,4 +77,4 @@ async def update_session(hashed_ip: str, db):
                     VALUES (%s, 1)
                 """, (hashed_ip,))
     except Exception as e:
-        logging.error(f"Session update error: {e}")
+        logger.error(f"Session update error for {hashed_ip}: {e}")
