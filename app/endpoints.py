@@ -49,26 +49,53 @@ async def collect_event(
     Collect analytics event from movie site
     """
     try:
+        # ADD DEBUG LOGGING
+        logger.info("=" * 50)
+        logger.info("📥 RECEIVED ANALYTICS REQUEST")
+        logger.info(f"Client IP: {request.client}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        
+        # Log the raw body if possible
+        try:
+            body = await request.body()
+            logger.info(f"Raw request body: {body.decode('utf-8')}")
+        except:
+            pass
+            
+        logger.info(f"Parsed event: {event.dict()}")
+        logger.info("=" * 50)
+        
         # 1. Extract and hash IP (handle the :0 port issue)
         raw_ip = get_ip_address(request)
+        logger.info(f"Raw IP from request: {raw_ip}")
+        
         # Clean up IP if it has :0 port
         ip_address = raw_ip.split(':')[0] if ':0' in raw_ip else raw_ip
+        logger.info(f"Cleaned IP: {ip_address}")
+        
         hashed_ip = ip_utils.hash_ip(ip_address)
+        logger.info(f"Hashed IP: {hashed_ip[:16]}...")
         
         # 2. Get IP metadata (cached or from API)
         ip_metadata = await get_ip_metadata_cached(ip_address)
+        logger.info(f"IP metadata: {ip_metadata}")
         
         # 3. Parse user agent if provided
         user_agent_info = {}
         if event.user_agent:
             user_agent_info = ip_utils.parse_user_agent(event.user_agent)
+            logger.info(f"User Agent info: {user_agent_info}")
         
-        # 4. Handle time_on_page action
+        # 4. Handle time_on_page action - FIXED!
         time_on_page = None
-        if event.action == "time_on_page" and hasattr(event, 'time_on_page'):
-            time_on_page = event.time_on_page
+        if event.action == "time_on_page":
+            # Get time_on_page from extra data
+            event_data = event.dict()
+            time_on_page = event_data.get('time_on_page')
+            logger.info(f"Time on page value: {time_on_page}")
         
         # 5. Insert event into PostgreSQL
+        logger.info("Inserting into database...")
         with db.get_cursor() as cursor:
             cursor.execute("""
                 INSERT INTO events (
@@ -95,7 +122,7 @@ async def collect_event(
             ))
             
             event_id = cursor.fetchone()["id"]
-            logger.info(f"Event recorded: {event_id} for IP: {hashed_ip[:8]}...")
+            logger.info(f"✅ Event recorded successfully: {event_id} for IP: {hashed_ip[:8]}...")
         
         # 6. Update session in background
         background_tasks.add_task(update_session, hashed_ip, event.session_id, db)
@@ -103,9 +130,9 @@ async def collect_event(
         return {"status": "ok", "message": "Event recorded"}
         
     except Exception as e:
-        logger.error(f"Error collecting event: {str(e)}")
+        logger.error(f"❌ Error collecting event: {str(e)}", exc_info=True)
         # Log the actual event data for debugging
-        logger.error(f"Event data: {event.dict()}")
+        logger.error(f"Event data that caused error: {event.dict() if 'event' in locals() else 'No event data'}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/health")
