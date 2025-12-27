@@ -37,21 +37,33 @@ def sanitize_int(value: Optional[Any]) -> Optional[int]:
     except (ValueError, TypeError):
         return None
 
-async def update_session(hashed_ip: str, db):
-    """Update or create session for IP"""
+async def update_session(hashed_ip: str, session_id: Optional[str], db):
+    """Update or create session for IP with session_id"""
     logger = logging.getLogger("app.utils")
     try:
         with db.get_cursor() as cursor:
-            # Check for existing active session (within last 30 minutes)
-            cursor.execute("""
-                SELECT id, page_count 
-                FROM sessions 
-                WHERE hashed_ip = %s 
-                AND session_end IS NULL 
-                AND session_start > NOW() - INTERVAL '30 minutes'
-                ORDER BY session_start DESC 
-                LIMIT 1
-            """, (hashed_ip,))
+            if session_id:
+                # Use session_id if available
+                cursor.execute("""
+                    SELECT id, page_count 
+                    FROM sessions 
+                    WHERE session_id = %s 
+                    AND session_end IS NULL 
+                    AND session_start > NOW() - INTERVAL '30 minutes'
+                    ORDER BY session_start DESC 
+                    LIMIT 1
+                """, (session_id,))
+            else:
+                # Fallback to IP
+                cursor.execute("""
+                    SELECT id, page_count 
+                    FROM sessions 
+                    WHERE hashed_ip = %s 
+                    AND session_end IS NULL 
+                    AND session_start > NOW() - INTERVAL '30 minutes'
+                    ORDER BY session_start DESC 
+                    LIMIT 1
+                """, (hashed_ip,))
             
             session = cursor.fetchone()
             
@@ -63,7 +75,7 @@ async def update_session(hashed_ip: str, db):
                     WHERE id = %s
                 """, (sanitize_int(session['page_count']) + 1, session['id']))
             else:
-                # End previous sessions
+                # End previous sessions for this hashed_ip
                 cursor.execute("""
                     UPDATE sessions 
                     SET session_end = NOW() 
@@ -73,8 +85,8 @@ async def update_session(hashed_ip: str, db):
                 
                 # Create new session
                 cursor.execute("""
-                    INSERT INTO sessions (hashed_ip, page_count) 
-                    VALUES (%s, 1)
-                """, (hashed_ip,))
+                    INSERT INTO sessions (hashed_ip, session_id, page_count) 
+                    VALUES (%s, %s, 1)
+                """, (hashed_ip, session_id))
     except Exception as e:
         logger.error(f"Session update error for {hashed_ip}: {e}")
