@@ -3,20 +3,20 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 class EventBase(BaseModel):
-    url: str
+    # These come from the analytics script
     page_id: str = Field(..., max_length=50)
+    url: str
     action: str = Field(..., max_length=20)
     referrer: Optional[str] = None
-    user_agent: Optional[str] = None
     session_id: Optional[str] = None
+    user_agent: Optional[str] = None
     screen_width: Optional[int] = None
     screen_height: Optional[int] = None
     timestamp: Optional[str] = None
-    # Allow any extra fields that might be sent
-    extra_data: Optional[Dict[str, Any]] = {}
     
+    # Allow extra fields from analytics script
     class Config:
-        extra = "allow"  # This allows extra fields
+        extra = "ignore"  # Changed from "allow" to "ignore" to be more permissive
     
     @validator('url', pre=True, always=True)
     def set_url(cls, v):
@@ -28,6 +28,11 @@ class EventBase(BaseModel):
     
     @validator('action', pre=True, always=True)
     def set_action(cls, v):
+        # Map "page_view" from script to "view" in database
+        if v == "page_view":
+            return "view"
+        if v == "time_on_page":
+            return "time_spent"
         return v or "unknown"
     
     @validator('screen_width', 'screen_height', pre=True)
